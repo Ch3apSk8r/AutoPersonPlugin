@@ -12,106 +12,126 @@ namespace Ch3apSk8r
 		// Session plugin: Tries to find all people and add a list of
 		// plugins to them
 
-		// List of plugins. Perhaps this should come from a JSON file? Could add settings too then
-		string[] personPlugins = new string[] {
-			"Custom/Scripts/passenger.cs",
-			"Custom/Scripts/ImprovedPov.cs",
-		};
-		string[] settings = new string[] {
-			@"{""id"":""auto#0_Passenger"",""Rotation Lock"":""true"",""No Roll"":""false"",""Position Z"":""0.1"",""Position Y"":""0.05""}",
-			@"{""id"":""auto#1_ImprovedPoV"",""Camera depth"":""0""}"
-		};
-		string[] blacklist = new string[] {
-			"Passenger.cs",
-			"ImprovedPoV.cs",
-		};
+		private JSONClass _settings;
 		public override void Init()
 		{
+			// in the future save this in the scene
+			_settings=JSON.Parse(SuperController.singleton.ReadFileIntoString("Custom/Scripts/Ch3apSk8r/AutoPersonPlugin/settings.json")) as JSONClass;
+		}
+		private JSONClass _getPluginSettingsByName(Atom at, string name)
+		{
+			string sid=at.GetStorableIDs().FirstOrDefault(id=>id.StartsWith(name));
+			JSONClass settings=at.GetStorableByID(sid).GetJSON();
+			//Log(settings.ToString());
+			return settings;
 		}
 		void Update()
 		{
-			foreach (Atom at in SuperController.singleton.GetAtoms().Where(a=>a.type=="Person"))
+			foreach (Atom person in SuperController.singleton.GetAtoms().Where(a=>a.type=="Person"))
 			{
-				MVRPluginManager manager = at.GetStorableByID("PluginManager") as MVRPluginManager;
-				JSONClass current=manager.GetJSON(true,true,true);
+				MVRPluginManager manager = person.GetStorableByID("PluginManager") as MVRPluginManager;
+				JSONClass currentPlugins=manager.GetJSON(true,true,true);
 
-				if(current["plugins"]!=null && current["plugins"]["auto#0"]!=null) {
+				if(currentPlugins["plugins"]!=null && currentPlugins["plugins"]["auto#0"]!=null) {
 					// We've done this one.
-				} else	if(current["plugins"]!=null && current["plugins"]["plugin#0"]!=null && current["plugins"]["plugin#0"].Value!="")
-				{
-					// Save current plugin settings
-					List<JSONClass> storables=new List<JSONClass>();
-					int j=0;
-					while(current["plugins"]["plugin#"+j.ToString()]!=null) {
-						// Perhaps see if we have a newer version of this plugin installed.
-						//Log(current["plugins"]["plugin#"+j.ToString()].Value);
-						// Or just check against a blacklist
-						foreach (string bad in blacklist) {
-							if(current["plugins"]["plugin#"+j.ToString()].Value.EndsWith(bad)) {
-								current["plugins"]["plugin#"+j.ToString()].Value="";
+				} else {
+					// New
+					JSONClass newPlugins=new JSONClass();
+					newPlugins["id"]="PluginManager";
+					Dictionary<string,JSONClass> pluginSettings = new Dictionary<string,JSONClass>();
+					int pluginCount=0;
+
+					// infer gender
+					JSONClass geom=person.GetStorableByID("geometry").GetJSON();
+					string gender="both";
+					if(geom["character"].Value.StartsWith("Male")) {
+						gender="male";
+					} else {
+						gender="female";
+					}
+					List<string> seen = new List<string>();
+					
+					// Look at existing plugins, save settings where appropriate
+					foreach(KeyValuePair<string, JSONNode> kvp in (JSONClass)currentPlugins["plugins"]) {
+						string shortname=kvp.Value;
+						seen.Add(shortname);
+						if(_settings[shortname]!=null && _settings[shortname]["gender"]=="both" || _settings[shortname]["gender"]==gender ) {
+							if(_settings[shortname]["path"]!=null) {
+								// we have a replacement script
+								newPlugins["plugins"]["auto#"+pluginCount.ToString()]=_settings[shortname]["path"];
+							} else {
+								// take current path
+								newPlugins["plugins"]["auto#"+pluginCount.ToString()]=kvp.Value;
 							}
-						} 
-						string sid=at.GetStorableIDs().FirstOrDefault(id=>id.StartsWith("plugin#"+j.ToString()));
-						JSONStorable jsons = at.GetStorableByID(sid);
-						storables.Add(jsons.GetJSON(true,true,true));
-						j++;
+							// We know this one do something
+							if(_settings[shortname]["settings"]!=null) {
+								Log("Replacing: "+_getPluginSettingsByName(person,kvp.Key).ToString());
+								Log("     With: "+_settings[shortname]["settings"].ToString());
+								// we have replacement settings
+								pluginSettings["auto#"+pluginCount.ToString()]=_settings[shortname]["settings"] as JSONClass;
+							} else {
+								// copy current settings
+								pluginSettings["auto#"+pluginCount.ToString()]=_getPluginSettingsByName(person,kvp.Key);
+							}
+						} else {
+							// We don't know this one, copy it and its settings
+							newPlugins["plugins"]["auto#"+pluginCount.ToString()]=kvp.Value;
+							pluginSettings["auto#"+pluginCount.ToString()]=_getPluginSettingsByName(person,kvp.Key);
+						}
+						pluginCount++;
 					}
-					// perhaps determine gender?
-					// Look at id="geometry" character="..."
-					for(int i=0;i<personPlugins.Length;i++) {
-						current["plugins"]["auto#"+i.ToString()]=personPlugins[i]; 
+					// Add any we've not done yet
+					foreach(KeyValuePair<string, JSONNode> kvp in (JSONClass)_settings) {
+						if(seen.Contains(kvp.Key) || kvp.Value["path"]==null) {
+							Log("Seen/blank");
+						} else {
+							Log("Not Seen");
+							newPlugins["plugins"]["auto#"+pluginCount.ToString()]=kvp.Value["path"];
+							if(kvp.Value["settings"]!=null) {
+								Log("Trying to stash settings: "+kvp.Value["settings"]);
+								// TODO is this getting set?
+								pluginSettings["auto#"+pluginCount.ToString()]=_settings[kvp.Key]["settings"] as JSONClass;
+
+							} else {
+								pluginSettings["auto#"+pluginCount.ToString()]=null;
+							}
+							pluginCount++;
+						}
 					}
+					Log("Old: "+currentPlugins.ToString());
+					Log("New: "+newPlugins.ToString());
 					try
 					{
 						// this will re-init plugins!
-						manager.LateRestoreFromJSON(current);
+						manager.LateRestoreFromJSON(newPlugins);
 					}
 					catch (Exception e)
 					{
 						SuperController.LogError("Failed to load plugin");
 						SuperController.LogError(e.ToString());
-
+						DestroyImmediate(this); 
 					}
+					Log("About to restore storables");
 					try
 					{
-						// perhaps restore storables
-						for(int i=0;i<j;i++) {
-							string sid=at.GetStorableIDs().FirstOrDefault(id=>id.StartsWith("plugin#"+i.ToString()));
-							JSONStorable s=at.GetStorableByID(sid);
-							Log("Restoring storable: "+i.ToString()+"="+storables[i].ToString());
-							s.RestoreFromJSON(storables[i]);
-						}
-						for(int i=0;i<personPlugins.Length;i++) {
-							string sid=at.GetStorableIDs().FirstOrDefault(id=>id.StartsWith("auto#"+i.ToString()));
-							Log("Attempting to restore setting: "+settings[i]);
-							JSONStorable s=at.GetStorableByID(sid);
-							JSONClass setting=JSON.Parse(settings[i]) as JSONClass;
-							Log("Parsed as: "+setting.ToString());
-							s.RestoreFromJSON(setting);
+						// restore storables
+						foreach(KeyValuePair<string, JSONClass> kvp in pluginSettings) {
+							Log("plugin to restore: "+kvp.Key);
+							if(kvp.Value!=null) {
+								Log("settings: "+kvp.Value.ToString());
+								string sid=person.GetStorableIDs().FirstOrDefault(id=>id.StartsWith(kvp.Key));
+								JSONStorable s=person.GetStorableByID(sid);
+								s.RestoreFromJSON(kvp.Value);
+							}
 						}
 					}
 					catch (Exception e)
 					{
 						SuperController.LogError("Failed to restore storables");
 						SuperController.LogError(e.ToString());
+						DestroyImmediate(this); 
 					}
 				} 
-				else
-				{
-					// load person plugins
-					for(int i=0;i<personPlugins.Length;i++){
-						current["plugins"]["auto#"+i.ToString()]=personPlugins[i];
-					}
-					try
-					{
-						manager.LateRestoreFromJSON(current);
-					}
-					catch (Exception e)
-					{
-						SuperController.LogError("Failed to load plugin");
-						SuperController.LogError(e.ToString());
-					}
-				}
 			}
 		}
 		void OnDestroy()

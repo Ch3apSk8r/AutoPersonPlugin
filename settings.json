@@ -1,0 +1,23 @@
+{
+	"Passenger.cs":{
+		"path":"Custom/Scripts/Passenger.cs",
+		"idsuffix":"_Passenger",
+		"settings": {
+			"Rotation Lock":"true",
+			"No Roll":"false",
+			"Position Z":"0.1",
+			"Position Y":"0.05"
+		},
+		"gender":"both"
+	},
+	"ImprovedPoV.cs":{
+		"path":"Custom/Scripts/ImprovedPoV.cs"
+	},
+	"ExampleBadSettings.cs":
+	{
+		"settings": {
+			"idsuffix":"_ExampleBadSettings",
+			"Setting One":"1"
+		}
+	}
+}
